@@ -1,3 +1,4 @@
+import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
 import numpy as np
@@ -5,7 +6,6 @@ from scipy.signal import convolve, periodogram
 from scipy.special import sinc
 import matplotlib.pyplot as plt
 from scipy.special import erfc
-from scipy.signal import welch
 
 import matplotlib as mpl
 if mpl.__version__ < '3.3.0':
@@ -13,10 +13,12 @@ if mpl.__version__ < '3.3.0':
 else:
     stem_kwargs = {}
 
+ctk.set_appearance_mode("system")  # "light" or "dark"
+ctk.set_default_color_theme("blue")  # Try "blue", "green", "dark-blue"
+
 # ------------------- OOK Simulation Functions ------------------- #
 
 def ook_psd_nrz(params):
-    """Analytical PSD for OOK-NRZ"""
     try:
         Rb = float(params.get('Bitrate (bps)', 1))
         Tb = 1 / Rb
@@ -24,12 +26,10 @@ def ook_psd_nrz(params):
         R = 1
         df = Rb / 100
         f = np.arange(0, 5*Rb, df)
-        
         x = f * Tb
         a = 2 * R * p_avg
         p_nrz = (a**2 * Tb) * (np.sinc(x)**2)
         p_nrz /= ((p_avg * R)**2 * Tb)
-        
         plt.figure()
         plt.plot(f, p_nrz, label='OOK-NRZ')
         plt.xlabel("Frequency (Hz)")
@@ -38,12 +38,10 @@ def ook_psd_nrz(params):
         plt.legend()
         plt.grid()
         plt.show()
-        
     except Exception as e:
         messagebox.showerror("Error", f"Failed to run OOK-NRZ PSD: {str(e)}")
 
 def ook_psd_rz(params):
-    """Analytical PSD for OOK-RZ"""
     try:
         Rb = float(params.get('Bitrate (bps)', 1))
         Tb = 1 / Rb
@@ -51,16 +49,14 @@ def ook_psd_rz(params):
         R = 1
         df = Rb / 100
         f = np.arange(0, 5*Rb, df)
-        
         x_rz = f * Tb / 2
         a = R * p_avg
         p_rz = (a**2 * Tb) * (np.sinc(x_rz)**2)
-        p_rz[int(Rb/df)] += ((a**2)*Tb) * (np.sinc(Rb*Tb/2)**2) / Tb
-        p_rz[int(2*Rb/df)] += ((a**2)*Tb) * (np.sinc(2*Rb*Tb/2)**2) / Tb
-        p_rz[int(3*Rb/df)] += ((a**2)*Tb) * (np.sinc(3*Rb*Tb/2)**2) / Tb
-        p_rz[int(4*Rb/df)] += ((a**2)*Tb) * (np.sinc(4*Rb*Tb/2)**2) / Tb
+        for n in range(1, 5):
+            idx = int(n*Rb/df)
+            if idx < len(p_rz):
+                p_rz[idx] += ((a**2)*Tb) * (np.sinc(n*Rb*Tb/2)**2) / Tb
         p_rz /= ((p_avg * R)**2 * Tb)
-        
         plt.figure()
         plt.plot(f, p_rz, label='OOK-RZ')
         plt.xlabel("Frequency (Hz)")
@@ -69,25 +65,19 @@ def ook_psd_rz(params):
         plt.legend()
         plt.grid()
         plt.show()
-        
     except Exception as e:
         messagebox.showerror("Error", f"Failed to run OOK-RZ PSD: {str(e)}")
 
 def ook_psd_simulated(params):
-    """Simulated PSD using periodogram"""
     try:
         Rb = float(params.get('Bitrate (bps)', 1))
         SigLen = int(params.get('Number of Bits', 1000))
         nsamp = int(params.get('Samples per Bit', 10))
-        
         fsamp = Rb * nsamp
-        Tx_filter = np.ones(nsamp)  # NRZ
+        Tx_filter = np.ones(nsamp)
         bin_data = np.random.randint(0, 2, SigLen)
         bin_signal = np.repeat(bin_data, nsamp)
-        
-        # Periodogram
         f_sim, Pxx = periodogram(bin_signal, fs=fsamp)
-        
         plt.figure()
         plt.plot(f_sim, 10*np.log10(Pxx))
         plt.xlabel("Frequency (Hz)")
@@ -95,102 +85,60 @@ def ook_psd_simulated(params):
         plt.title(f"Simulated PSD of OOK Signal (NRZ)\n{Rb} bps, {SigLen} bits, {nsamp} samples/bit")
         plt.grid()
         plt.show()
-        
     except Exception as e:
         messagebox.showerror("Error", f"Failed to run OOK simulated PSD: {str(e)}")
 
 def ook_multipath_simulation(params):
-    """Upgraded OOK transmission with multipath effects"""
-
     try:
-        # Get parameters
         sig_length = int(params.get('Number of Bits', 1000))
         nsamp = int(params.get('Samples per Bit', 10))
         Rb = float(params.get('Bitrate (bps)', 1))
         i_peak = float(params.get('Peak Amplitude', 1.0))
         Dt = float(params.get('Delay Spread (Dt)', 0.1))
         sgma = float(params.get('Noise Sigma', 0.2))
-
         Tb = 1 / Rb
         Tsamp = Tb / nsamp
-
-        # Derived multipath parameters
         Drms = Dt * Tb
         a = 12 * np.sqrt(11 / 13) * Drms
-        K = int(10 * nsamp)  # Smarter truncation of channel length
+        K = int(10 * nsamp)
         k = np.arange(0, K + 1)
-
-        # Channel Impulse Response
         h = (6 * a**6) / ((k * Tsamp + a)**7)
-        h = h / np.sum(h)  # normalize energy
-
-        # Transmit Pulse Shape
+        h = h / np.sum(h)
         pt = np.ones(nsamp) * i_peak
-
-        # Combined Transmit Pulse (pulse shaping + channel)
         matched_filter = convolve(pt, h)
-        matched_filter = matched_filter / np.linalg.norm(matched_filter)  # Normalize for clean matched filtering
-
-        # System Impulse Response
+        matched_filter = matched_filter / np.linalg.norm(matched_filter)
         system_response = convolve(matched_filter, pt)
-        delay = np.argmax(system_response)  # Correct delay estimation
-
-        # Data Generation
+        delay = np.argmax(system_response)
         OOK = np.random.randint(0, 2, sig_length)
         Tx_signal = np.repeat(OOK, nsamp) * i_peak
-
-        # Pass through channel
         channel_output = convolve(Tx_signal, h)
-
-        # Add Noise
         Rx_signal = channel_output + sgma * np.random.randn(len(channel_output))
-
-        # Matched Filtering
         MF_out = convolve(Rx_signal, matched_filter) * Tsamp
-
-        # Downsample Carefully
         MF_out_downsamp = MF_out[delay::nsamp][:sig_length]
-
-        # Set Decision Threshold
         Ep = np.sum(matched_filter**2) * Tsamp
-        threshold = Ep / 2  # Midpoint energy threshold
+        threshold = Ep / 2
         Rx_th = (MF_out_downsamp > threshold).astype(int)
-
-        # --- Plot Results ---
         plt.figure(figsize=(12, 8))
-
-        # Plot transmitted signal
         plt.subplot(3, 1, 1)
         plt.plot(Tx_signal[:200])
         plt.title(f'Transmitted Signal (first 200 samples)\nBitrate: {Rb} bps, Amplitude: {i_peak}')
         plt.grid()
-
-        # Plot received noisy signal
         plt.subplot(3, 1, 2)
         plt.plot(Rx_signal[:200])
         plt.title(f'Received Signal with Noise (σ={sgma})\nDelay Spread: {Dt}, Samples/bit: {nsamp}')
         plt.grid()
-
-        # Plot bits
         plt.subplot(3, 1, 3)
         plt.stem(OOK[:50], linefmt='b-', markerfmt='bo', basefmt=' ')
         plt.stem(Rx_th[:50], linefmt='r-', markerfmt='ro', basefmt=' ')
-
-        # Highlight errors
         error_indices = np.where(OOK[:50] != Rx_th[:50])[0]
         plt.scatter(error_indices, Rx_th[error_indices], color='black', marker='x', s=100, label='Errors')
-
         plt.title('Original vs Received Bits (first 50 bits)')
         plt.legend(['Original', 'Received', 'Errors'])
         plt.grid()
-
         plt.tight_layout()
         plt.show()
-
-        # Calculate BER
         BER = np.mean(OOK != Rx_th)
-
-        messagebox.showinfo("Results", 
+        messagebox.showinfo("Results",
             f"Simulation Parameters:\n"
             f"- Bitrate: {Rb} bps\n"
             f"- Bits: {sig_length}\n"
@@ -199,87 +147,60 @@ def ook_multipath_simulation(params):
             f"- Delay Spread: {Dt}\n"
             f"- Noise Sigma: {sgma}\n\n"
             f"Bit Error Rate: {BER:.6f}")
-
     except Exception as e:
         messagebox.showerror("Error", f"Failed to run OOK multipath simulation: {str(e)}")
 
 # ------------------- PPM Functions ------------------- #
 
 def generate_ppm_sequence(params):
-    """Generate PPM sequence"""
     try:
         M = int(params.get('Bit Resolution (M)', 4))
         nsym = int(params.get('Number of Symbols', 100))
-        
         L = 2**M
         ppm_signal = []
-        
         for _ in range(nsym):
-            # Random binary number of M bits
             temp = np.random.randint(0, 2, M)
-            
-            # Convert to decimal
             dec_value = int("".join(str(bit) for bit in temp), 2)
-            
-            # Create one-hot vector
             symbol = np.zeros(L)
             symbol[dec_value] = 1
             ppm_signal.extend(symbol)
-        
-        # Plot first few symbols
         plt.figure(figsize=(12, 4))
-        plt.stem(ppm_signal[:5*L])  # Removed use_line_collection
+        plt.stem(ppm_signal[:5*L])
         plt.title(f"First 5 Symbols of {L}-PPM Sequence\n(M={M}, {nsym} symbols)")
         plt.xlabel("Slot Index")
         plt.ylabel("Amplitude")
         plt.grid(True, alpha=0.3)
         plt.show()
-        
-        messagebox.showinfo("PPM Sequence Generated", 
+        messagebox.showinfo("PPM Sequence Generated",
                           f"Successfully generated {L}-PPM sequence:\n"
                           f"- Bit resolution (M): {M}\n"
                           f"- Number of symbols: {nsym}\n"
                           f"- Sequence length: {len(ppm_signal)} slots")
-        
     except Exception as e:
         messagebox.showerror("Error", f"Failed to generate PPM sequence: {str(e)}")
 
-
 def ppm_psd_analytical(params):
-    """Analytical PSD for PPM"""
     try:
-        Rb = float(params.get('Bitrate (bps)', 1e6))   # Bit rate
-        M = int(params.get('Bit Resolution (M)', 4))   # Bit Resolution
-        p_avg = float(params.get('Avg Power (p_avg)', 1))  # Average Power
-        R = float(params.get('Responsivity (R)', 1))  # Responsivity
-        snr_db = float(params.get('SNR (dB)', 10))  # Signal-to-Noise Ratio (SNR) in dB
-        
-        # Convert SNR from dB to linear scale
+        Rb = float(params.get('Bitrate (bps)', 1e6))
+        M = int(params.get('Bit Resolution (M)', 4))
+        p_avg = float(params.get('Avg Power (p_avg)', 1))
+        R = float(params.get('Responsivity (R)', 1))
+        snr_db = float(params.get('SNR (dB)', 10))
         snr_linear = 10 ** (snr_db / 10)
-
-        Tb = 1 / Rb              # Bit duration
-        L = 2 ** M               # PPM symbol length
-        a = R * L * p_avg        # Electrical pulse amplitude
-        Ts = M / (L * Rb)        # Slot duration
-        Rs = 1 / Ts              # Slot rate
-        df = Rs / 1000           # Frequency resolution
-        f = np.arange(0, 8 * Rb, df)  # Frequency vector
-
-        # Power spectral density of rectangular pulse
+        Tb = 1 / Rb
+        L = 2 ** M
+        a = R * L * p_avg
+        Ts = M / (L * Rb)
+        Rs = 1 / Ts
+        df = Rs / 1000
+        f = np.arange(0, 8 * Rb, df)
         P_sq = (a * Ts)**2 * (np.sinc(f * Ts))**2
-
-        # Spectral shape of the PPM signal
         temp1 = np.zeros_like(f)
         for k in range(1, L):
             temp1 += (k / L - 1) * np.cos(2 * np.pi * k * f * Ts)
-
         S_c = (1 / (L * Ts)) * (((L - 1) / L) + (2 / L) * temp1)
-
-        # Final PSD
         S = P_sq * S_c
-        S /= ((p_avg * R)**2 * Tb)  # Normalize by energy per bit
-        
-        # Plotting PSD
+        S /= ((p_avg * R)**2 * Tb)
         plt.figure(figsize=(10, 5))
         plt.plot(f, S, label=f'{L}-PPM PSD')
         plt.title(f"Analytical PSD of {L}-PPM\nRb={Rb/1e6} Mbps, M={M}")
@@ -289,18 +210,12 @@ def ppm_psd_analytical(params):
         plt.legend()
         plt.tight_layout()
         plt.show()
-        
-        # Calculate BER using the formula: ber = 0.5 * erfc(sqrt(snr / 2))
         ber = 0.5 * erfc(np.sqrt(snr_linear / 2))
-        
-        # Show BER result
         messagebox.showinfo("BER Calculation", f"Calculated BER for {L}-PPM modulation: {ber:.6f}")
-
     except Exception as e:
         messagebox.showerror("Error", f"Failed to calculate PPM PSD: {str(e)}")
 
 def ppm_ser_simulation(params):
-    """PPM Symbol Error Rate Simulation"""
     try:
         M = int(params.get('Bit Resolution (M)', 4))
         nsym = int(params.get('Number of Symbols', 500))
@@ -308,17 +223,13 @@ def ppm_ser_simulation(params):
         min_EbN0 = float(params.get('Min Eb/N0 (dB)', -10))
         max_EbN0 = float(params.get('Max Eb/N0 (dB)', 10))
         step_EbN0 = float(params.get('Step Eb/N0 (dB)', 2))
-        
         EbN0_dB = np.arange(min_EbN0, max_EbN0 + step_EbN0, step_EbN0)
         L = 2**M
         SNR = 10**(EbN0_dB / 10)
         EsN0_dB = EbN0_dB + 10 * np.log10(M)
-
         ser_hdd = []
         ser_sdd = []
-
         for i, ebn0 in enumerate(EbN0_dB):
-            # Generate PPM signal
             ppm = []
             for _ in range(nsym):
                 rand_bits = np.random.randint(0, 2, M)
@@ -327,17 +238,11 @@ def ppm_ser_simulation(params):
                 symbol[dec_val] = 1
                 ppm.extend(symbol)
             ppm = np.array(ppm)
-            
-            # Add noise (with +3dB for matched filter gain)
             noisy_ppm = ppm + np.sqrt(1/(2*10**(EsN0_dB[i]/10))) * np.random.randn(len(ppm))
-            
-            # Hard Decision Decoding
             Rx_th = np.zeros_like(noisy_ppm)
             Rx_th[noisy_ppm > 0.5] = 1
             hdd_ser = np.sum(ppm != Rx_th) / len(ppm)
             ser_hdd.append(hdd_ser)
-            
-            # Soft Decision Decoding
             PPM_SDD = []
             for k in range(nsym):
                 slot = noisy_ppm[k*L:(k+1)*L]
@@ -345,15 +250,10 @@ def ppm_ser_simulation(params):
                 symbol = np.zeros(L)
                 symbol[np.where(slot == max_val)[0]] = 1
                 PPM_SDD.extend(symbol)
-            
             sdd_ser = np.sum(ppm != np.array(PPM_SDD)) / len(ppm)
             ser_sdd.append(sdd_ser)
-
-        # Theoretical curves
         Ps_theoretical_hdd = 0.5 * erfc(np.sqrt(0.5 * M * L * SNR))
         Ps_theoretical_sdd = 0.5 * erfc(np.sqrt(M * L * SNR))
-
-        # Plotting
         plt.figure(figsize=(10, 6))
         plt.semilogy(EbN0_dB, ser_hdd, 'bo-', label='HDD Simulated')
         plt.semilogy(EbN0_dB, ser_sdd, 'go-', label='SDD Simulated')
@@ -366,28 +266,23 @@ def ppm_ser_simulation(params):
         plt.grid(True, which='both', linestyle=':')
         plt.tight_layout()
         plt.show()
-        
     except Exception as e:
         messagebox.showerror("Error", f"Failed to run PPM SER simulation: {str(e)}")
 
 # ------------------- DPIM Functions ------------------- #
 
 def generate_dpim_sequence(params):
-    """Generate DPIM sequence"""
     try:
         M = int(params.get('Bit Resolution (M)', 4))
         nsym = int(params.get('Number of Symbols', 100))
         NGS = int(params.get('Guard Slots (NGS)', 0))
-        
         DPIM = []
         inpb = np.random.randint(0, 2, size=(nsym, M))
         for i in range(nsym):
-            inpd = int("".join(map(str, inpb[i])), 2)  # binary to decimal
+            inpd = int("".join(map(str, inpb[i])), 2)
             temp = [0] * (inpd + NGS)
             DPIM.extend([1] + temp)
         DPIM = np.array(DPIM)
-        
-        # Plot first few symbols
         plt.figure(figsize=(12, 4))
         plt.stem(DPIM[:100], linefmt='b-', markerfmt='bo', basefmt='r-')
         plt.title(f"First 100 Slots of DPIM Sequence\n(M={M}, {nsym} symbols, NGS={NGS})")
@@ -395,25 +290,21 @@ def generate_dpim_sequence(params):
         plt.ylabel("Amplitude")
         plt.grid(True, alpha=0.3)
         plt.show()
-        
-        messagebox.showinfo("DPIM Sequence Generated", 
+        messagebox.showinfo("DPIM Sequence Generated",
                           f"Successfully generated DPIM sequence:\n"
                           f"- Bit resolution (M): {M}\n"
                           f"- Number of symbols: {nsym}\n"
                           f"- Guard slots (NGS): {NGS}\n"
                           f"- Sequence length: {len(DPIM)} slots")
-        
     except Exception as e:
         messagebox.showerror("Error", f"Failed to generate DPIM sequence: {str(e)}")
 
 def dpim_psd(params):
-    """Analytical PSD for DPIM"""
     try:
         Rb = float(params.get('Bitrate (bps)', 1e6))
         M = int(params.get('Bit Resolution (M)', 4))
         p_avg = float(params.get('Avg Power (p_avg)', 1))
         R = float(params.get('Responsivity (R)', 1))
-        
         Tb = 1 / Rb
         L = 2**M
         Lavg = 0.5 * (2**M + 1)
@@ -423,8 +314,6 @@ def dpim_psd(params):
         df = Rs / 100
         f = np.arange(0, 8 * Rb, df)
         x = f * Ts
-        
-        # Calculate autocorrelation coefficients
         r = [2/(L+1)]
         for k in range(1, L+1):
             r.append(2/((L**k) * (L+1)**(k-2)))
@@ -433,16 +322,12 @@ def dpim_psd(params):
             r.append((1/L) * temp)
         for k in range(5*L, 1000):
             r.append((1/Lavg)**2)
-            
         r = np.array(r)
         P_sq = (a * Ts)**2 * (np.sinc(f * Ts))**2
         term2 = 0
         for ii in range(len(r)-1):
             term2 += (r[ii+1] - (1/Lavg)**2) * np.cos(2 * np.pi * ii * f * Ts)
-        
         p = (1/Ts) * P_sq * ((r[0] - 1/Lavg**2) + 2 * term2)
-        
-        # Plotting PSD
         plt.figure(figsize=(10, 5))
         plt.plot(f, p, label=f'DPIM PSD (M={M})')
         plt.title(f"Analytical PSD of DPIM\nRb={Rb/1e6} Mbps, M={M}")
@@ -452,12 +337,10 @@ def dpim_psd(params):
         plt.legend()
         plt.tight_layout()
         plt.show()
-        
     except Exception as e:
         messagebox.showerror("Error", f"Failed to calculate DPIM PSD: {str(e)}")
 
 def dpim_ser_simulation(params):
-    """DPIM Symbol Error Rate Simulation"""
     try:
         M = int(params.get('Bit Resolution (M)', 4))
         nsym = int(params.get('Number of Symbols', 500))
@@ -466,15 +349,12 @@ def dpim_ser_simulation(params):
         min_EbN0 = float(params.get('Min Eb/N0 (dB)', -10))
         max_EbN0 = float(params.get('Max Eb/N0 (dB)', 10))
         step_EbN0 = float(params.get('Step Eb/N0 (dB)', 2))
-        
         EbN0_dB = np.arange(min_EbN0, max_EbN0 + step_EbN0, step_EbN0)
         Lavg = 0.5*(2**M + 1) + NGS
         Tb = 1/Rb
         Ts = M / (Lavg * Rb)
         SNR = 10**(EbN0_dB / 10)
-        
         ser = []
-        
         for Eb in EbN0_dB:
             DPIM = generate_DPIM(M, nsym, NGS)
             Lsig = len(DPIM)
@@ -485,11 +365,7 @@ def dpim_ser_simulation(params):
             Rx_DPIM_th[MF_out > 0.5] = 1
             errors = np.sum(Rx_DPIM_th != DPIM)
             ser.append(errors / Lsig)
-        
-        # Theoretical SER
         Pse_DPIM = 0.5 * erfc(np.sqrt(0.5 * M * Lavg * SNR / 2))
-        
-        # Plotting
         plt.figure(figsize=(10, 6))
         plt.semilogy(EbN0_dB, ser, 'bo-', label='Simulated SER')
         plt.semilogy(EbN0_dB, Pse_DPIM, 'r--', label='Theoretical SER')
@@ -500,16 +376,14 @@ def dpim_ser_simulation(params):
         plt.grid(True, which='both', linestyle=':')
         plt.tight_layout()
         plt.show()
-        
     except Exception as e:
         messagebox.showerror("Error", f"Failed to run DPIM SER simulation: {str(e)}")
 
 def generate_DPIM(M, nsym, NGS=0):
-    """Helper function to generate DPIM sequence"""
     DPIM = []
     inpb = np.random.randint(0, 2, size=(nsym, M))
     for i in range(nsym):
-        inpd = int("".join(map(str, inpb[i])), 2)  # binary to decimal
+        inpd = int("".join(map(str, inpb[i])), 2)
         temp = [0] * (inpd + NGS)
         DPIM.extend([1] + temp)
     return np.array(DPIM)
@@ -517,12 +391,9 @@ def generate_DPIM(M, nsym, NGS=0):
 # ------------------- GUI Functions ------------------- #
 
 def open_input_dialog(callback_func):
-    input_win = tk.Toplevel(root)
+    input_win = ctk.CTkToplevel(root)
     input_win.title("Input Parameters")
-    
-    # Determine which fields we need based on the function being called
     func_name = callback_func.__name__
-    
     if func_name in ['ook_psd_nrz', 'ook_psd_rz']:
         fields = ["Bitrate (bps)"]
         input_win.geometry("300x150")
@@ -531,42 +402,42 @@ def open_input_dialog(callback_func):
         input_win.geometry("300x250")
     elif func_name == 'ook_multipath_simulation':
         fields = [
-            "Bitrate (bps)", 
-            "Number of Bits", 
-            "Samples per Bit", 
-            "Peak Amplitude", 
-            "Delay Spread (Dt)", 
+            "Bitrate (bps)",
+            "Number of Bits",
+            "Samples per Bit",
+            "Peak Amplitude",
+            "Delay Spread (Dt)",
             "Noise Sigma"
         ]
         input_win.geometry("300x400")
     elif func_name in ['ppm_psd_analytical', 'dpim_psd']:
         fields = [
-            "Bitrate (bps)", 
-            "Bit Resolution (M)", 
-            "Avg Power (p_avg)", 
+            "Bitrate (bps)",
+            "Bit Resolution (M)",
+            "Avg Power (p_avg)",
             "Responsivity (R)"
         ]
         input_win.geometry("350x300")
     elif func_name == 'generate_ppm_sequence':
         fields = [
-            "Bit Resolution (M)", 
+            "Bit Resolution (M)",
             "Number of Symbols"
         ]
         input_win.geometry("300x200")
     elif func_name == 'generate_dpim_sequence':
         fields = [
-            "Bit Resolution (M)", 
+            "Bit Resolution (M)",
             "Number of Symbols",
             "Guard Slots (NGS)"
         ]
         input_win.geometry("350x250")
     elif func_name in ['ppm_ser_simulation', 'dpim_ser_simulation']:
         fields = [
-            "Bit Resolution (M)", 
-            "Number of Symbols", 
-            "Bitrate (bps)", 
-            "Min Eb/N0 (dB)", 
-            "Max Eb/N0 (dB)", 
+            "Bit Resolution (M)",
+            "Number of Symbols",
+            "Bitrate (bps)",
+            "Min Eb/N0 (dB)",
+            "Max Eb/N0 (dB)",
             "Step Eb/N0 (dB)"
         ]
         if func_name == 'dpim_ser_simulation':
@@ -575,56 +446,41 @@ def open_input_dialog(callback_func):
     else:
         fields = ["Bitrate", "Num Bits", "SNR (if needed)"]
         input_win.geometry("300x250")
-
     entries = {}
-    
-    # Default values for each parameter
     defaults = {
-        # OOK parameters
         "Bitrate (bps)": "1",
         "Number of Bits": "1000",
         "Samples per Bit": "10",
         "Peak Amplitude": "1.0",
         "Delay Spread (Dt)": "0.1",
         "Noise Sigma": "0.2",
-        
-        # PPM/DPIM common parameters
         "Bit Resolution (M)": "4",
         "Number of Symbols": "100",
         "Avg Power (p_avg)": "1",
         "Responsivity (R)": "1",
         "Guard Slots (NGS)": "0",
-        
-        # SER simulation parameters
         "Min Eb/N0 (dB)": "-10",
         "Max Eb/N0 (dB)": "10",
         "Step Eb/N0 (dB)": "2",
-        
-        # Fallback defaults
         "Bitrate": "1",
         "Num Bits": "1000",
         "SNR (if needed)": "10"
     }
-    
     for field in fields:
-        frame = tk.Frame(input_win, bg="#F2F2F2")
+        frame = ctk.CTkFrame(input_win)
         frame.pack(fill='x', padx=5, pady=5)
-        
-        tk.Label(frame, text=field, bg="#F2F2F2", font=("Arial", 10)).pack(side='left')
-        entry = tk.Entry(frame)
+        ctk.CTkLabel(frame, text=field, font=ctk.CTkFont(size=12)).pack(side='left')
+        entry = ctk.CTkEntry(frame)
         entry.insert(0, defaults.get(field, ""))
         entry.pack(side='right', expand=True, fill='x')
         entries[field] = entry
-
     def submit():
         params = {field: entries[field].get() for field in fields}
         input_win.destroy()
         callback_func(params)
-
-    btn_frame = tk.Frame(input_win, bg="#F2F2F2")
+    btn_frame = ctk.CTkFrame(input_win)
     btn_frame.pack(fill='x', pady=10)
-    tk.Button(btn_frame, text="Run", command=submit, bg="#007FFF", fg="white", 
-              padx=15, pady=5).pack(side='right', padx=10)
+    ctk.CTkButton(btn_frame, text="Run", command=submit).pack(side='right', padx=10)
 
 def on_modulation_select(modulation_type, selected_modulation):
     func_map = {
@@ -645,73 +501,54 @@ def on_modulation_select(modulation_type, selected_modulation):
             'DPIM-SER': dpim_ser_simulation
         }
     }
-
     func = func_map[modulation_type][selected_modulation]
     open_input_dialog(func)
 
 def show_modulation_options():
     start_frame.pack_forget()
-    modulation_frame.pack()
+    modulation_frame.pack(fill='both', expand=True)
 
 def back_to_start():
     modulation_frame.pack_forget()
-    start_frame.pack()
+    start_frame.pack(fill='both', expand=True)
 
 # ------------------- GUI Setup ------------------- #
 
-root = tk.Tk()
+root = ctk.CTk()
 root.title("FSO Modulation Simulator 3000")
-root.geometry("650x500")
-root.configure(bg="#FDF6F0")
+root.geometry("700x520")
 
 # Start Frame
-start_frame = tk.Frame(root, bg="#FDF6F0")
-tk.Label(start_frame, text="Step 1: Choose FSO Type", font=("Arial", 16, "bold"), bg="#FDF6F0").pack(pady=20)
-
-tk.Button(start_frame, text="Indoor", font=("Arial", 12), bg="#7FDBA0", 
-          command=show_modulation_options, width=15).pack(pady=10)
-tk.Button(start_frame, text="Outdoor", font=("Arial", 12), bg="#FFB347", 
-          command=lambda: messagebox.showinfo("Info", "Outdoor module coming soon!"), width=15).pack(pady=10)
-start_frame.pack()
+start_frame = ctk.CTkFrame(root)
+ctk.CTkLabel(start_frame, text="Step 1: Choose FSO Type", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=30)
+ctk.CTkButton(start_frame, text="Indoor", font=ctk.CTkFont(size=14), command=show_modulation_options, width=180).pack(pady=16)
+ctk.CTkButton(start_frame, text="Outdoor", font=ctk.CTkFont(size=14), command=lambda: messagebox.showinfo("Info", "Outdoor module coming soon!"), width=180).pack(pady=16)
+start_frame.pack(fill='both', expand=True)
 
 # Modulation Frame
-modulation_frame = tk.Frame(root, bg="#F2F2F2")
-tk.Label(modulation_frame, text="Step 2: Select Modulation Scheme", 
-         font=("Arial", 16, "bold"), bg="#F2F2F2").pack(pady=20)
+modulation_frame = ctk.CTkFrame(root)
+ctk.CTkLabel(modulation_frame, text="Step 2: Select Modulation Scheme", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=25)
 
 def make_buttons_row(frame, items, type_):
-    row = tk.Frame(frame, bg="#F2F2F2")
+    row = ctk.CTkFrame(frame)
     for label in items:
-        b = tk.Button(row, text=label, width=18, pady=5, 
-                     bg="#007FFF", fg="white", font=("Arial", 10, "bold"),
-                     command=lambda l=label: on_modulation_select(type_, l))
-        b.pack(side=tk.LEFT, padx=5, pady=5)
+        b = ctk.CTkButton(row, text=label, width=180, font=ctk.CTkFont(size=12, weight="bold"),
+                          command=lambda l=label: on_modulation_select(type_, l))
+        b.pack(side=tk.LEFT, padx=8, pady=8)
     row.pack()
 
-# OOK Buttons
-tk.Label(modulation_frame, text="OOK Modulation", bg="#F2F2F2", 
-         font=("Arial", 12, "bold")).pack()
-make_buttons_row(modulation_frame, 
-                ['OOK-NRZ PSD', 'OOK-RZ PSD', 'OOK-PERIODOGRAM', 'OOK-MULTIPATH'], 
+ctk.CTkLabel(modulation_frame, text="OOK Modulation", font=ctk.CTkFont(size=14, weight="bold")).pack()
+make_buttons_row(modulation_frame,
+                ['OOK-NRZ PSD', 'OOK-RZ PSD', 'OOK-PERIODOGRAM', 'OOK-MULTIPATH'],
                 'OOK')
-
-# PPM Buttons
-tk.Label(modulation_frame, text="PPM Modulation", bg="#F2F2F2", 
-         font=("Arial", 12, "bold")).pack(pady=(10,0))
-make_buttons_row(modulation_frame, 
-                ['PPM-PSD', 'PPM-SER', 'PPM-SEQUENCE'], 
+ctk.CTkLabel(modulation_frame, text="PPM Modulation", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(12,0))
+make_buttons_row(modulation_frame,
+                ['PPM-PSD', 'PPM-SER', 'PPM-SEQUENCE'],
                 'PPM')
-
-# DPIM Buttons
-tk.Label(modulation_frame, text="DPIM Modulation", bg="#F2F2F2", 
-         font=("Arial", 12, "bold")).pack(pady=(10,0))
-make_buttons_row(modulation_frame, 
-                ['DPIM-SEQUENCE', 'DPIM-PSD', 'DPIM-SER'], 
+ctk.CTkLabel(modulation_frame, text="DPIM Modulation", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(12,0))
+make_buttons_row(modulation_frame,
+                ['DPIM-SEQUENCE', 'DPIM-PSD', 'DPIM-SER'],
                 'DPIM')
-
-# Back Button
-tk.Button(modulation_frame, text="⬅ Back", font=("Arial", 12), 
-          bg="#FF6B6B", fg="white", width=10, 
-          command=back_to_start).pack(pady=20)
+ctk.CTkButton(modulation_frame, text="⬅ Back", font=ctk.CTkFont(size=13), width=120, command=back_to_start).pack(pady=25)
 
 root.mainloop()
